@@ -67,8 +67,8 @@ struct StepProvider: TimelineProvider {
         fetchStepsForWidget { steps in
             let entry = StepEntry(date: .now, steps: steps, authorized: true)
             
-            // Refresh every 30 minutes
-            let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: .now)!
+            // Refresh every 15 minutes
+            let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: .now)!
             let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
             completion(timeline)
         }
