@@ -7,78 +7,118 @@
 
 import WidgetKit
 import SwiftUI
+import HealthKit
 
-struct Provider: TimelineProvider {
-    func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(date: Date(), emoji: "😀")
+// MARK: - HealthKit Step Reader
+
+func fetchStepsForWidget(completion: @escaping (Int) -> Void) {
+    guard HKHealthStore.isHealthDataAvailable() else {
+        completion(0)
+        return
     }
-
-    func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> ()) {
-        let entry = SimpleEntry(date: Date(), emoji: "😀")
-        completion(entry)
+    
+    let store = HKHealthStore()
+    guard let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
+        completion(0)
+        return
     }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> ()) {
-        var entries: [SimpleEntry] = []
-
-        // Generate a timeline consisting of five entries an hour apart, starting from the current date.
-        let currentDate = Date()
-        for hourOffset in 0 ..< 5 {
-            let entryDate = Calendar.current.date(byAdding: .hour, value: hourOffset, to: currentDate)!
-            let entry = SimpleEntry(date: entryDate, emoji: "😀")
-            entries.append(entry)
+    
+    let now = Date()
+    let startOfDay = Calendar.current.startOfDay(for: now)
+    let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: now)
+    
+    let query = HKStatisticsQuery(
+        quantityType: stepType,
+        quantitySamplePredicate: predicate,
+        options: .cumulativeSum
+    ) { _, result, _ in
+        guard let result, let sum = result.sumQuantity() else {
+            completion(0)
+            return
         }
-
-        let timeline = Timeline(entries: entries, policy: .atEnd)
-        completion(timeline)
+        completion(Int(sum.doubleValue(for: .count())))
     }
-
-//    func relevances() async -> WidgetRelevances<Void> {
-//        // Generate a list containing the contexts this widget is relevant in.
-//    }
+    
+    store.execute(query)
 }
 
-struct SimpleEntry: TimelineEntry {
+// MARK: - Timeline Entry
+
+struct StepEntry: TimelineEntry {
     let date: Date
-    let emoji: String
+    let steps: Int
+    let authorized: Bool
 }
 
-struct StepWidgetExtensionEntryView : View {
-    var entry: Provider.Entry
+// MARK: - Timeline Provider
 
-    var body: some View {
-        VStack {
-            Text("Time:")
-            Text(entry.date, style: .time)
-
-            Text("Emoji:")
-            Text(entry.emoji)
+struct StepProvider: TimelineProvider {
+    func placeholder(in context: Context) -> StepEntry {
+        StepEntry(date: .now, steps: 8000, authorized: true)
+    }
+    
+    func getSnapshot(in context: Context, completion: @escaping (StepEntry) -> Void) {
+        fetchStepsForWidget { steps in
+            completion(StepEntry(date: .now, steps: steps, authorized: true))
+        }
+    }
+    
+    func getTimeline(in context: Context, completion: @escaping (Timeline<StepEntry>) -> Void) {
+        fetchStepsForWidget { steps in
+            let entry = StepEntry(date: .now, steps: steps, authorized: true)
+            
+            // Refresh every 30 minutes
+            let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: .now)!
+            let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+            completion(timeline)
         }
     }
 }
+
+// MARK: - Widget View
+
+struct StepWidgetEntryView: View {
+    var entry: StepEntry
+    @Environment(\.widgetFamily) var family
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("\(entry.steps)")
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            
+            Text("steps")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .containerBackground(.fill.tertiary, for: .widget)
+    }
+}
+
+// MARK: - Widget Configuration
 
 struct StepWidgetExtension: Widget {
     let kind: String = "StepWidgetExtension"
-
+    
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: Provider()) { entry in
-            if #available(iOS 17.0, *) {
-                StepWidgetExtensionEntryView(entry: entry)
-                    .containerBackground(.fill.tertiary, for: .widget)
-            } else {
-                StepWidgetExtensionEntryView(entry: entry)
-                    .padding()
-                    .background()
-            }
+        StaticConfiguration(kind: kind, provider: StepProvider()) { entry in
+            StepWidgetEntryView(entry: entry)
         }
-        .configurationDisplayName("My Widget")
-        .description("This is an example widget.")
+        .configurationDisplayName("Step Count")
+        .description("Shows your daily step count on the lock screen.")
+        .supportedFamilies([
+            .accessoryCircular,
+            .accessoryRectangular,
+            .systemSmall
+        ])
     }
 }
 
-#Preview(as: .systemSmall) {
+// MARK: - Preview
+
+#Preview(as: .accessoryRectangular) {
     StepWidgetExtension()
 } timeline: {
-    SimpleEntry(date: .now, emoji: "😀")
-    SimpleEntry(date: .now, emoji: "🤩")
+    StepEntry(date: .now, steps: 4231, authorized: true)
 }
